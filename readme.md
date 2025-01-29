@@ -4,11 +4,11 @@ A simple tool that turns PDF files into formatted markdown documents.
 
 It breaks down a PDF into pages and runs an analysis of each:
 
-1. If the page is 90% text (by area) we can simply extract the text from the pdf, assuming that the images on the page are not of key importance.
+1. If the page is 90% text (by area) we can simply extract the text from the pdf, assuming that the images on the page are not of key importance. The benefit of having step 1 means that for PDF documents that contain many pages of pure text, we're not wasting LLM tokens on image processing every page.
 
-2. If not, then the whole page is sent as an image for interpretation by the LLM. This seems to yield better results than non-LLM based extraction, as it allow 'in-context' addition of diagrams, organisational charts etc.
+2. If mixed content or only images, then the whole page is sent as an image for interpretation by the LLM. This seems to yield better results than non-LLM based extraction, as it allow 'in-context' addition of diagrams, organisational charts etc.
 
-The benefit of having step 1 means that, for documents that contain large quantities of text only information, we're not wasting LLM tokens on image processing every page.
+3. The document is then sent back for a final pass through the LLM to clean up formatting and check for structure.
 
 ## What it does
 
@@ -16,13 +16,13 @@ The benefit of having step 1 means that, for documents that contain large quanti
 - Analyses each page to decide if it's text only or mixed
 - Extracts text or requests LLM interpretation of content
 - Reassembles all pages of text
-- Sends completed document back to the LLM for a final format/content check
+- Sends completed document (according to size of document this may get chunked and reassmbled after) back to the LLM for a final format/content check
 
 ## Quick Start
 
 1. Currently only set up to work from the IDE
 2. Install the required dependencies: `pip install -r requirements.txt`
-3. Create a .env with OPENAI_API_KEY= entry
+3. Create a .env with OPENAI_API_KEY=your_api_key
 4. Place a PDF file in the data folder
 5. Run the 'run.py' script
 

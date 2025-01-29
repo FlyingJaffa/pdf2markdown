@@ -106,35 +106,96 @@ def combine_page_content(all_pages_data):
     return "\n".join(content_only)
 
 def text_tidy_up(full_document):
-    # This should clean up formatting and check for structure
-   
+    """Clean up formatting and check for structure, handling large documents appropriately"""
+    
+    # First estimate total tokens needed
     prompt_tokens = estimate_tokens_from_string(get_cleanup_prompt(full_document))
-    # Reduce the estimate by 15% to match actual usage patterns
-    prompt_tokens = int(prompt_tokens * 0.85)
     print(f"\nTidy up prompt tokens: {prompt_tokens:,}")
     
-    try:
-        final_response = client.chat.completions.create(
-            model=model2,
-            messages=[{"role": "user", "content": get_cleanup_prompt(full_document)}],
-            temperature=temperature
-        )
-        
-        # Get actual token usage from API response
-        actual_tokens = final_response.usage.total_tokens if hasattr(final_response, 'usage') else 0
-        
-        completion_tokens = len(final_response.choices[0].message.content) // 4
-        # Reduce the estimate by 15% to match actual usage patterns
-        completion_tokens = int(completion_tokens * 0.85)
-        print(f"Tidy up completion tokens: {completion_tokens:,}")
-        total_analysis_tokens_estimate = prompt_tokens + completion_tokens
-        print(f"Total estimated tidy up tokens: {total_analysis_tokens_estimate:,}")
-        print(f"Actual tidy up tokens (from API): {actual_tokens:,}")
-        
-        return final_response.choices[0].message.content, total_analysis_tokens_estimate, actual_tokens
-    except Exception as e:
-        print(f"Error in tidy up: {str(e)}")
-        return f"Error in tidy up: {str(e)}\n\nRaw document content:\n\n{full_document}", 0, 0
+    # GPT-4 has a context window of about 8k tokens, let's keep a safety margin
+    MAX_CHUNK_SIZE = 6000  # tokens
+    
+    # If document is small enough, process it normally
+    if prompt_tokens <= MAX_CHUNK_SIZE:
+        try:
+            final_response = client.chat.completions.create(
+                model=model2,
+                messages=[{"role": "user", "content": get_cleanup_prompt(full_document)}],
+                temperature=temperature,
+                max_tokens=MAX_TOKENS
+            )
+            
+            actual_tokens = final_response.usage.total_tokens if hasattr(final_response, 'usage') else 0
+            completion_tokens = len(final_response.choices[0].message.content) // 4
+            print(f"Tidy up completion tokens: {completion_tokens:,}")
+            print(f"Actual tidy up tokens (from API): {actual_tokens:,}")
+            
+            return final_response.choices[0].message.content, prompt_tokens, actual_tokens
+            
+        except Exception as e:
+            print(f"Error in tidy up: {str(e)}")
+            return f"Error in tidy up: {str(e)}\n\nRaw document content:\n\n{full_document}", 0, 0
+    
+    # If document is too large, split it into chunks and process each chunk
+    print("\nDocument too large for single processing, splitting into chunks...")
+    
+    # Split document into paragraphs
+    paragraphs = full_document.split('\n\n')
+    chunks = []
+    current_chunk = []
+    current_chunk_tokens = 0
+    
+    # Build chunks that fit within token limit
+    for paragraph in paragraphs:
+        paragraph_tokens = estimate_tokens_from_string(paragraph)
+        if current_chunk_tokens + paragraph_tokens > MAX_CHUNK_SIZE:
+            # Process current chunk
+            chunk_text = '\n\n'.join(current_chunk)
+            chunks.append(chunk_text)
+            current_chunk = [paragraph]
+            current_chunk_tokens = paragraph_tokens
+        else:
+            current_chunk.append(paragraph)
+            current_chunk_tokens += paragraph_tokens
+    
+    # Add the last chunk if it exists
+    if current_chunk:
+        chunks.append('\n\n'.join(current_chunk))
+    
+    print(f"Split document into {len(chunks)} chunks")
+    
+    # Process each chunk
+    processed_chunks = []
+    total_prompt_tokens = 0
+    total_actual_tokens = 0
+    
+    for i, chunk in enumerate(chunks, 1):
+        print(f"\nProcessing chunk {i}/{len(chunks)}")
+        try:
+            chunk_response = client.chat.completions.create(
+                model=model2,
+                messages=[{
+                    "role": "user", 
+                    "content": get_cleanup_prompt(chunk) + "\nThis is part " + str(i) + " of " + str(len(chunks)) + "."
+                }],
+                temperature=temperature,
+                max_tokens=MAX_TOKENS
+            )
+            
+            chunk_actual_tokens = chunk_response.usage.total_tokens if hasattr(chunk_response, 'usage') else 0
+            total_actual_tokens += chunk_actual_tokens
+            total_prompt_tokens += estimate_tokens_from_string(chunk)
+            
+            processed_chunks.append(chunk_response.choices[0].message.content)
+            
+        except Exception as e:
+            print(f"Error processing chunk {i}: {str(e)}")
+            processed_chunks.append(chunk)  # Use original chunk if processing fails
+    
+    # Combine processed chunks
+    final_content = '\n\n'.join(processed_chunks)
+    
+    return final_content, total_prompt_tokens, total_actual_tokens
 
 def save_markdown(output_markdown_path, final_content):
     """Save the final formatted content to a markdown file"""
